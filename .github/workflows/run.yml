@@ -2,8 +2,8 @@ name: Oracle Mumbai Capacity Loop
 
 on:
   schedule:
-    - cron: '0 */5 * * *' # Automatically restarts every 5 hours to stay alive forever
-  workflow_dispatch: # Allows you to manually click "Run" anytime
+    - cron: '0 */5 * * *'
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -14,8 +14,8 @@ jobs:
 
       - name: Install Oracle Cloud CLI
         run: |
-          bash -c "$(curl -L https://githubusercontent.com)" -- --accept-all-defaults
-          echo "/home/runner/bin" >> $GITHUB_PATH
+        pip install oci-cli
+        
 
       - name: Setup OCI Credentials
         run: |
@@ -29,8 +29,6 @@ jobs:
         run: |
           $stackId = "ocid1.ormstack.oc1.ap-mumbai-1.amaaaaaa27ugzrqaojordx4plfetepjfzzhefedfwgo5tw3gc5c6kvrsnbra"
           $cfgPath = "/home/runner/.oci/config"
-          
-          # Run for 4.5 hours per session to avoid sudden GitHub timeout limits
           $startTime = [DateTime]::UtcNow
           
           while ($true) {
