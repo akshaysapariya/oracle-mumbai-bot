@@ -1,0 +1,59 @@
+name: Oracle Mumbai Capacity Loop
+
+on:
+  schedule:
+    - cron: '0 */5 * * *' # Automatically restarts every 5 hours to stay alive forever
+  workflow_dispatch: # Allows you to manually click "Run" anytime
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Oracle Cloud CLI
+        run: |
+          bash -c "$(curl -L https://githubusercontent.com)" -- --accept-all-defaults
+          echo "/home/runner/bin" >> $GITHUB_PATH
+
+      - name: Setup OCI Credentials
+        run: |
+          mkdir -p /home/runner/.oci
+          echo "${{ secrets.OCI_CONFIG_FILE }}" > /home/runner/.oci/config
+          echo "${{ secrets.OCI_API_KEY }}" > /home/runner/.oci/oci_api_key.pem
+          chmod 600 /home/runner/.oci/oci_api_key.pem
+
+      - name: Run PowerShell Script
+        shell: pwsh
+        run: |
+          $stackId = "ocid1.ormstack.oc1.ap-mumbai-1.amaaaaaa27ugzrqaojordx4plfetepjfzzhefedfwgo5tw3gc5c6kvrsnbra"
+          $cfgPath = "/home/runner/.oci/config"
+          
+          # Run for 4.5 hours per session to avoid sudden GitHub timeout limits
+          $startTime = [DateTime]::UtcNow
+          
+          while ($true) {
+              if (([DateTime]::UtcNow - $startTime).TotalMinutes -gt 270) {
+                  Write-Host "Reaching cycle limits. Gracefully spinning up next runner..." -ForegroundColor Yellow
+                  break
+              }
+
+              Write-Host "$(Get-Date -Format 'HH:mm:ss') - Submitting fast-request to Mumbai data center..." -ForegroundColor Cyan
+              try {
+                  $job = oci resource-manager job create-apply-job --stack-id $stackId --execution-plan-strategy "FROM_STACK" --config-file $cfgPath 2>$null | ConvertFrom-Json
+                  if ($job) {
+                      Write-Host "Request acknowledged by Oracle engine. Checking queue..." -ForegroundColor Yellow
+                      $state = $job.data.'lifecycle-state'
+                      if ($state -eq "SUCCEEDED") {
+                          Write-Host "SUCCESS! Your Always Free 12 GB RAM Ampere server has been successfully built!" -ForegroundColor Green
+                          break
+                      }
+                  }
+                  Write-Host "Mumbai rack is completely full. Retrying shortly..." -ForegroundColor Red
+              } catch {
+                  Write-Host "API Request throttled or data engine busy. Pausing..." -ForegroundColor Gray
+              }
+              
+              Start-Sleep -Seconds 15
+          }
