@@ -13,9 +13,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Oracle Cloud CLI
-        run: |
-        pip install oci-cli
-        
+        run: pip install oci-cli
 
       - name: Setup OCI Credentials
         run: |
