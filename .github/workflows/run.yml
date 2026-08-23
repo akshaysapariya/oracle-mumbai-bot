@@ -2,7 +2,7 @@ name: Oracle Mumbai Capacity Loop
 
 on:
   schedule:
-    - cron: '0 */5 * * *'
+    - cron: '0 */5 * * *' # Automatically spins up a fresh runner every 5 hours
   workflow_dispatch:
 
 jobs:
@@ -30,26 +30,40 @@ jobs:
           $startTime = [DateTime]::UtcNow
           
           while ($true) {
-              if (([DateTime]::UtcNow - $startTime).TotalMinutes -gt 270) {
-                  Write-Host "Reaching cycle limits. Gracefully spinning up next runner..." -ForegroundColor Yellow
+              # 1. Keeps your 4-hour cycle limit check (Exits at 240 mins to allow clean shutdown before the 5-hour cron)
+              if (([DateTime]::UtcNow - $startTime).TotalMinutes -gt 240) {
+                  Write-Host "Reaching 4-hour cycle limits. Gracefully spinning down. Next GitHub cron runner will take over shortly..." -ForegroundColor Yellow
                   break
               }
 
               Write-Host "$(Get-Date -Format 'HH:mm:ss') - Submitting fast-request to Mumbai data center..." -ForegroundColor Cyan
+              
+              # 2. Redirect standard error (2>&1) so PowerShell can inspect Oracle's real response text
+              $output = oci resource-manager job create-apply-job --stack-id $stackId --execution-plan-strategy "FROM_STACK" --config-file $cfgPath 2>&1
+
+              # 3. Intercept Oracle API Throttling (HTTP 429)
+              if ($output -match "TooManyRequests" -or $output -match "429" -or $output -match "throttled") {
+                  Write-Host "CRITICAL WARNING: Oracle is throttling your API! Too many requests. Cool-down pause..." -ForegroundColor DarkYellow
+                  Start-Sleep -Seconds 600 # Sleep for 10 minutes to let your Oracle API quota reset
+                  continue
+              }
+              
+              # 4. Attempt to parse successful JSON
               try {
-                  $job = oci resource-manager job create-apply-job --stack-id $stackId --execution-plan-strategy "FROM_STACK" --config-file $cfgPath 2>$null | ConvertFrom-Json
+                  $job = $output | ConvertFrom-Json
                   if ($job) {
-                      Write-Host "Request acknowledged by Oracle engine. Checking queue..." -ForegroundColor Yellow
                       $state = $job.data.'lifecycle-state'
-                      if ($state -eq "SUCCEEDED") {
-                          Write-Host "SUCCESS! Your Always Free 12 GB RAM Ampere server has been successfully built!" -ForegroundColor Green
+                      Write-Host "Request acknowledged by Oracle engine. Status: $state" -ForegroundColor Yellow
+                      if ($state -eq "SUCCEEDED" -or $state -eq "ACCEPTED" -or $state -eq "IN_PROGRESS") {
+                          Write-Host "SUCCESS! Your Always Free Ampere server build has started!" -ForegroundColor Green
                           break
                       }
                   }
-                  Write-Host "Mumbai rack is completely full. Retrying shortly..." -ForegroundColor Red
               } catch {
-                  Write-Host "API Request throttled or data engine busy. Pausing..." -ForegroundColor Gray
+                  # Prints real error or indicates standard "out of capacity"
+                  Write-Host "Mumbai rack is completely full or out of capacity. Raw details: $output" -ForegroundColor Red
               }
               
+              # 5. Standard loop delay
               Start-Sleep -Seconds 180
           }
